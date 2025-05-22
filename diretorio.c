@@ -117,7 +117,6 @@ struct Diretorio *le_diretorio(FILE *arq) {
     
     return dir;
 }
-
 int salva_diretorio(FILE *arq, struct Diretorio *dir) {
     fprintf(stderr, "Salvando diretório com %d membros\n", dir->quantidade);
     

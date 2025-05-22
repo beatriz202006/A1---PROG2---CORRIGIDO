@@ -102,152 +102,122 @@ int escreve_arquivo(const char *nome_arq, unsigned char *buffer, unsigned int ta
 
 
 int inserir_membro(const char *archive, const char *membro, int comprimir) {
-    fprintf(stderr, "Inserindo membro: %s (comprimir: %d)\n", membro, comprimir);
-    
     // Lê o arquivo a ser inserido
     unsigned int tam_original;
     unsigned char *dados = le_arquivo(membro, &tam_original);
     if (!dados) {
-        fprintf(stderr, "Erro ao ler arquivo: %s\n", membro);
         return 1;
-    }
-    
-    // Por enquanto, não implementamos compressão
-    unsigned int tam_disco = tam_original;
-    if (comprimir) {
-        fprintf(stderr, "Aviso: Compressão solicitada, mas não implementada ainda\n");
     }
     
     // Extrai apenas o nome base do arquivo (sem caminho)
     const char *nome_base = get_basename(membro);
-    fprintf(stderr, "Nome base: %s\n", nome_base);
     
-    // Abre ou cria o arquivo archive
-    FILE *arq = fopen(archive, "rb+");
+    // Estrutura para armazenar o diretório
     struct Diretorio *dir = NULL;
     
-    if (!arq) {
-        // Cria novo arquivo
-        fprintf(stderr, "Criando novo arquivo archive: %s\n", archive);
-        arq = fopen(archive, "wb+");
-        if (!arq) {
-            fprintf(stderr, "Erro ao criar arquivo archive: %s\n", archive);
-            free(dados);
-            return 1;
-        }
+    // Verifica se o arquivo archive já existe
+    FILE *arq = fopen(archive, "rb");
+    if (arq) {
+        // Lê o diretório existente
+        dir = le_diretorio(arq);
+        fclose(arq);
         
-        // Cria diretório vazio
-        dir = cria_diretorio();
         if (!dir) {
-            fprintf(stderr, "Erro ao criar diretório\n");
-            fclose(arq);
             free(dados);
             return 1;
         }
     } else {
-        // Se o arquivo já existe, lê o diretório
-        fprintf(stderr, "Arquivo archive já existe, lendo diretório\n");
-        dir = le_diretorio(arq);
+        // Cria um novo diretório vazio
+        dir = malloc(sizeof(struct Diretorio));
         if (!dir) {
-            fprintf(stderr, "Erro ao ler diretório existente\n");
-            fclose(arq);
             free(dados);
             return 1;
         }
-        
-        fprintf(stderr, "Diretório lido com %d membros\n", dir->quantidade);
-        
-        // Verifica se o membro já existe
-        for (int i = 0; i < dir->quantidade; i++) {
-            if (strcmp(dir->membros[i].nome, nome_base) == 0) {
-                fprintf(stderr, "Membro %s já existe, será substituído\n", nome_base);
-                // Remover o membro existente
-                remove_membro(dir, i);
-                break;
-            }
-        }
+        dir->quantidade = 0;
+        dir->membros = NULL;
     }
     
-    // Calcula o tamanho do diretório após adicionar o novo membro
-    int nova_quantidade = dir->quantidade + 1;
-    long tamanho_diretorio = sizeof(int) + nova_quantidade * sizeof(struct Membro);
-    
-    fprintf(stderr, "Tamanho do diretório após adicionar o novo membro: %ld bytes\n", tamanho_diretorio);
-    
-    // Cria a estrutura do novo membro
+    // Adiciona o novo membro ao diretório
     struct Membro novo_membro;
     memset(&novo_membro, 0, sizeof(struct Membro));
     strncpy(novo_membro.nome, nome_base, sizeof(novo_membro.nome) - 1);
     novo_membro.uid = getuid();
     novo_membro.tam_orig = tam_original;
-    novo_membro.tam_disco = tam_disco;
+    novo_membro.tam_disco = tam_original; // Sem compressão por enquanto
     novo_membro.data_modif = time(NULL);
     novo_membro.ordem = dir->quantidade;
-    novo_membro.offset = tamanho_diretorio;  // O offset começa após o diretório completo
     
-    fprintf(stderr, "Offset para dados do novo membro: %ld\n", novo_membro.offset);
+    // Calcula o tamanho do diretório e o offset para o novo membro
+    long tamanho_diretorio = sizeof(int) + (dir->quantidade + 1) * sizeof(struct Membro);
+    novo_membro.offset = tamanho_diretorio;
     
-    // Adiciona o membro ao diretório
-    if (adiciona_membro(dir, novo_membro) == -1) {
-        fprintf(stderr, "Erro ao adicionar membro ao diretório\n");
-        destroi_diretorio(dir);
-        fclose(arq);
+    // Adiciona o novo membro ao diretório
+    struct Membro *novos_membros = malloc((dir->quantidade + 1) * sizeof(struct Membro));
+    if (!novos_membros) {
         free(dados);
+        if (dir->membros) free(dir->membros);
+        free(dir);
         return 1;
     }
     
-    fprintf(stderr, "Membro adicionado ao diretório: %s (offset: %ld, tamanho: %u)\n", 
-            novo_membro.nome, novo_membro.offset, novo_membro.tam_disco);
+    // Copia os membros existentes
+    for (int i = 0; i < dir->quantidade; i++) {
+        novos_membros[i] = dir->membros[i];
+    }
     
-    // Reescreve o arquivo inteiro
-    rewind(arq);
+    // Adiciona o novo membro
+    novos_membros[dir->quantidade] = novo_membro;
     
-    // Salva o diretório atualizado
-    if (salva_diretorio(arq, dir) != 0) {
-        fprintf(stderr, "Erro ao salvar diretório atualizado\n");
-        destroi_diretorio(dir);
-        fclose(arq);
+    // Atualiza o diretório
+    if (dir->membros) free(dir->membros);
+    dir->membros = novos_membros;
+    dir->quantidade++;
+    
+    // Abre o arquivo para escrita
+    arq = fopen(archive, "wb");
+    if (!arq) {
         free(dados);
+        free(dir->membros);
+        free(dir);
         return 1;
     }
     
-    fprintf(stderr, "Diretório atualizado salvo com sucesso\n");
-    
-    // Verifica a posição atual no arquivo
-    long pos_atual = ftell(arq);
-    fprintf(stderr, "Posição atual após salvar diretório: %ld (esperado: %ld)\n", 
-            pos_atual, tamanho_diretorio);
-    
-    // Ajusta a posição se necessário
-    if (pos_atual != tamanho_diretorio) {
-        fprintf(stderr, "Ajustando posição para o offset correto\n");
-        if (fseek(arq, tamanho_diretorio, SEEK_SET) != 0) {
-            fprintf(stderr, "Erro ao posicionar no offset para dados\n");
-            destroi_diretorio(dir);
-            fclose(arq);
-            free(dados);
-            return 1;
-        }
-    }
-    
-    // Escreve os dados do membro
-    if (fwrite(dados, 1, tam_disco, arq) != tam_disco) {
-        fprintf(stderr, "Erro ao escrever dados do membro\n");
-        destroi_diretorio(dir);
+    // Escreve a quantidade de membros
+    if (fwrite(&dir->quantidade, sizeof(int), 1, arq) != 1) {
         fclose(arq);
         free(dados);
+        free(dir->membros);
+        free(dir);
         return 1;
     }
     
-    fprintf(stderr, "Dados do membro escritos com sucesso\n");
+    // Escreve os membros
+    if (fwrite(dir->membros, sizeof(struct Membro), dir->quantidade, arq) != dir->quantidade) {
+        fclose(arq);
+        free(dados);
+        free(dir->membros);
+        free(dir);
+        return 1;
+    }
+    
+    // Escreve os dados do novo membro
+    if (fwrite(dados, 1, tam_original, arq) != tam_original) {
+        fclose(arq);
+        free(dados);
+        free(dir->membros);
+        free(dir);
+        return 1;
+    }
     
     // Limpeza
-    destroi_diretorio(dir);
     fclose(arq);
     free(dados);
+    free(dir->membros);
+    free(dir);
     
     return 0;
 }
+
 
 
 int deve_extrair(const char *nome, const char **membros, int num_membros) {
