@@ -61,67 +61,92 @@ int remove_membro(struct Diretorio *dir, int indice) {
 
 struct Diretorio *le_diretorio(FILE *arq) {
     // Posiciona no início do arquivo
-    if (fseek(arq, 0, SEEK_SET) != 0) {
-        return NULL;
-    }
+    rewind(arq);
     
     // Lê a quantidade de membros
     int quantidade;
     if (fread(&quantidade, sizeof(int), 1, arq) != 1) {
+        fprintf(stderr, "Erro ao ler quantidade de membros\n");
         return NULL;
     }
     
-    // Cria o diretório
+    fprintf(stderr, "Lendo diretório com %d membros\n", quantidade);
+    
+    // Verifica se a quantidade é válida
+    if (quantidade < 0 || quantidade > 1000) {  // Limite arbitrário para evitar problemas
+        fprintf(stderr, "Quantidade inválida de membros: %d\n", quantidade);
+        return NULL;
+    }
+    
+    // Aloca o diretório
     struct Diretorio *dir = malloc(sizeof(struct Diretorio));
     if (!dir) {
+        fprintf(stderr, "Erro ao alocar diretório\n");
         return NULL;
     }
     
     dir->quantidade = quantidade;
-    dir->membros = NULL;
     
-    if (quantidade > 0) {
-        // Aloca espaço para os membros
-        dir->membros = malloc(quantidade * sizeof(struct Membro));
-        if (!dir->membros) {
-            free(dir);
-            return NULL;
-        }
-        
-        // Lê cada membro
-        for (int i = 0; i < quantidade; i++) {
-            if (fread(&dir->membros[i], sizeof(struct Membro), 1, arq) != 1) {
-                free(dir->membros);
-                free(dir);
-                return NULL;
-            }
-        }
+    // Se não há membros, retorna o diretório vazio
+    if (quantidade == 0) {
+        dir->membros = NULL;
+        return dir;
+    }
+    
+    // Aloca espaço para os membros
+    dir->membros = malloc(quantidade * sizeof(struct Membro));
+    if (!dir->membros) {
+        fprintf(stderr, "Erro ao alocar membros\n");
+        free(dir);
+        return NULL;
+    }
+    
+    // Lê os membros
+    if (fread(dir->membros, sizeof(struct Membro), quantidade, arq) != quantidade) {
+        fprintf(stderr, "Erro ao ler membros\n");
+        free(dir->membros);
+        free(dir);
+        return NULL;
+    }
+    
+    // Imprime informações sobre os membros lidos
+    for (int i = 0; i < quantidade; i++) {
+        fprintf(stderr, "Membro %d lido: %s (offset: %ld, tamanho: %u)\n", 
+                i, dir->membros[i].nome, dir->membros[i].offset, dir->membros[i].tam_disco);
     }
     
     return dir;
 }
 
-
 int salva_diretorio(FILE *arq, struct Diretorio *dir) {
+    fprintf(stderr, "Salvando diretório com %d membros\n", dir->quantidade);
+    
     // Posiciona no início do arquivo
     if (fseek(arq, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "Erro ao posicionar no início do arquivo\n");
         return 1;
     }
     
     // Escreve a quantidade de membros
     if (fwrite(&dir->quantidade, sizeof(int), 1, arq) != 1) {
+        fprintf(stderr, "Erro ao escrever quantidade de membros\n");
         return 1;
     }
     
     // Escreve cada membro
     for (int i = 0; i < dir->quantidade; i++) {
+        fprintf(stderr, "Salvando membro %d: %s (offset: %ld, tamanho: %u)\n", 
+                i, dir->membros[i].nome, dir->membros[i].offset, dir->membros[i].tam_disco);
+        
         if (fwrite(&dir->membros[i], sizeof(struct Membro), 1, arq) != 1) {
+            fprintf(stderr, "Erro ao escrever membro %d\n", i);
             return 1;
         }
     }
     
     return 0;
 }
+
 long offset_final(FILE *arq) {
     // Salva a posição atual
     long pos_atual = ftell(arq);
