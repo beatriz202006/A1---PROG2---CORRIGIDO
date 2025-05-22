@@ -109,6 +109,12 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         return 1;
     }
     
+    fprintf(stderr, "Primeiros bytes do arquivo %s: ", membro);
+    for (int i = 0; i < 10 && i < tam_original; i++) {
+        fprintf(stderr, "%02x ", dados[i]);
+    }
+    fprintf(stderr, "\n");
+    
     // Extrai apenas o nome base do arquivo (sem caminho)
     const char *nome_base = get_basename(membro);
     
@@ -118,14 +124,47 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
     // Verifica se o arquivo archive já existe
     FILE *arq = fopen(archive, "rb");
     if (arq) {
-        // Lê o diretório existente
-        dir = le_diretorio(arq);
-        fclose(arq);
-        
-        if (!dir) {
+        // Lê a quantidade de membros
+        int quantidade;
+        if (fread(&quantidade, sizeof(int), 1, arq) != 1) {
+            fclose(arq);
             free(dados);
             return 1;
         }
+        
+        // Aloca o diretório
+        dir = malloc(sizeof(struct Diretorio));
+        if (!dir) {
+            fclose(arq);
+            free(dados);
+            return 1;
+        }
+        
+        dir->quantidade = quantidade;
+        
+        // Aloca espaço para os membros
+        if (quantidade > 0) {
+            dir->membros = malloc(quantidade * sizeof(struct Membro));
+            if (!dir->membros) {
+                free(dir);
+                fclose(arq);
+                free(dados);
+                return 1;
+            }
+            
+            // Lê os membros
+            if (fread(dir->membros, sizeof(struct Membro), quantidade, arq) != quantidade) {
+                free(dir->membros);
+                free(dir);
+                fclose(arq);
+                free(dados);
+                return 1;
+            }
+        } else {
+            dir->membros = NULL;
+        }
+        
+        fclose(arq);
     } else {
         // Cria um novo diretório vazio
         dir = malloc(sizeof(struct Diretorio));
@@ -137,7 +176,22 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         dir->membros = NULL;
     }
     
-    // Adiciona o novo membro ao diretório
+    // Cria um novo array de membros com espaço para o novo membro
+    int nova_quantidade = dir->quantidade + 1;
+    struct Membro *novos_membros = malloc(nova_quantidade * sizeof(struct Membro));
+    if (!novos_membros) {
+        if (dir->membros) free(dir->membros);
+        free(dir);
+        free(dados);
+        return 1;
+    }
+    
+    // Copia os membros existentes
+    for (int i = 0; i < dir->quantidade; i++) {
+        novos_membros[i] = dir->membros[i];
+    }
+    
+    // Cria o novo membro
     struct Membro novo_membro;
     memset(&novo_membro, 0, sizeof(struct Membro));
     strncpy(novo_membro.nome, nome_base, sizeof(novo_membro.nome) - 1);
@@ -147,77 +201,161 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
     novo_membro.data_modif = time(NULL);
     novo_membro.ordem = dir->quantidade;
     
-    // Calcula o tamanho do diretório e o offset para o novo membro
-    long tamanho_diretorio = sizeof(int) + (dir->quantidade + 1) * sizeof(struct Membro);
-    novo_membro.offset = tamanho_diretorio;
-    
-    // Adiciona o novo membro ao diretório
-    struct Membro *novos_membros = malloc((dir->quantidade + 1) * sizeof(struct Membro));
-    if (!novos_membros) {
-        free(dados);
-        if (dir->membros) free(dir->membros);
-        free(dir);
-        return 1;
-    }
-    
-    // Copia os membros existentes
-    for (int i = 0; i < dir->quantidade; i++) {
-        novos_membros[i] = dir->membros[i];
-    }
-    
     // Adiciona o novo membro
     novos_membros[dir->quantidade] = novo_membro;
     
     // Atualiza o diretório
     if (dir->membros) free(dir->membros);
     dir->membros = novos_membros;
-    dir->quantidade++;
+    dir->quantidade = nova_quantidade;
     
-    // Abre o arquivo para escrita
-    arq = fopen(archive, "wb");
-    if (!arq) {
-        free(dados);
+    // Calcula o tamanho do diretório
+    long tamanho_diretorio = sizeof(int) + nova_quantidade * sizeof(struct Membro);
+    
+    // Calcula os offsets para cada membro
+    long offset = tamanho_diretorio;
+    for (int i = 0; i < nova_quantidade; i++) {
+        dir->membros[i].offset = offset;
+        offset += dir->membros[i].tam_disco;
+    }
+    
+    // Cria um arquivo temporário para armazenar os dados
+    char temp_file[PATH_MAX];
+    snprintf(temp_file, PATH_MAX, "%s.tmp", archive);
+    
+    // Abre o arquivo temporário para escrita
+    FILE *temp = fopen(temp_file, "wb");
+    if (!temp) {
         free(dir->membros);
         free(dir);
+        free(dados);
         return 1;
     }
     
     // Escreve a quantidade de membros
-    if (fwrite(&dir->quantidade, sizeof(int), 1, arq) != 1) {
-        fclose(arq);
-        free(dados);
+    if (fwrite(&dir->quantidade, sizeof(int), 1, temp) != 1) {
+        fclose(temp);
+        remove(temp_file);
         free(dir->membros);
         free(dir);
+        free(dados);
         return 1;
     }
     
     // Escreve os membros
-    if (fwrite(dir->membros, sizeof(struct Membro), dir->quantidade, arq) != dir->quantidade) {
-        fclose(arq);
-        free(dados);
+    if (fwrite(dir->membros, sizeof(struct Membro), dir->quantidade, temp) != dir->quantidade) {
+        fclose(temp);
+        remove(temp_file);
         free(dir->membros);
         free(dir);
+        free(dados);
         return 1;
     }
     
+    // Se houver membros existentes, precisamos copiar seus dados
+    if (dir->quantidade > 1) {
+        // Abre o arquivo original para leitura
+        FILE *arq_old = fopen(archive, "rb");
+        if (!arq_old) {
+            fclose(temp);
+            remove(temp_file);
+            free(dir->membros);
+            free(dir);
+            free(dados);
+            return 1;
+        }
+        
+        // Para cada membro existente (exceto o novo)
+        for (int i = 0; i < dir->quantidade - 1; i++) {
+            // Aloca espaço para os dados do membro
+            unsigned char *dados_membro = malloc(dir->membros[i].tam_disco);
+            if (!dados_membro) {
+                fclose(arq_old);
+                fclose(temp);
+                remove(temp_file);
+                free(dir->membros);
+                free(dir);
+                free(dados);
+                return 1;
+            }
+            
+            // Posiciona no offset do membro no arquivo original
+            // Precisamos calcular o offset antigo
+            long old_offset = sizeof(int) + (dir->quantidade - 1) * sizeof(struct Membro);
+            for (int j = 0; j < i; j++) {
+                old_offset += dir->membros[j].tam_disco;
+            }
+            
+            if (fseek(arq_old, old_offset, SEEK_SET) != 0) {
+                free(dados_membro);
+                fclose(arq_old);
+                fclose(temp);
+                remove(temp_file);
+                free(dir->membros);
+                free(dir);
+                free(dados);
+                return 1;
+            }
+            
+            // Lê os dados do membro
+            if (fread(dados_membro, 1, dir->membros[i].tam_disco, arq_old) != dir->membros[i].tam_disco) {
+                free(dados_membro);
+                fclose(arq_old);
+                fclose(temp);
+                remove(temp_file);
+                free(dir->membros);
+                free(dir);
+                free(dados);
+                return 1;
+            }
+            
+            // Escreve os dados do membro no arquivo temporário
+            if (fwrite(dados_membro, 1, dir->membros[i].tam_disco, temp) != dir->membros[i].tam_disco) {
+                free(dados_membro);
+                fclose(arq_old);
+                fclose(temp);
+                remove(temp_file);
+                free(dir->membros);
+                free(dir);
+                free(dados);
+                return 1;
+            }
+            
+            free(dados_membro);
+        }
+        
+        fclose(arq_old);
+    }
+    
     // Escreve os dados do novo membro
-    if (fwrite(dados, 1, tam_original, arq) != tam_original) {
-        fclose(arq);
-        free(dados);
+    if (fwrite(dados, 1, tam_original, temp) != tam_original) {
+        fclose(temp);
+        remove(temp_file);
         free(dir->membros);
         free(dir);
+        free(dados);
+        return 1;
+    }
+    
+    // Fecha o arquivo temporário
+    fclose(temp);
+    
+    // Substitui o arquivo original pelo temporário
+    if (rename(temp_file, archive) != 0) {
+        remove(temp_file);
+        free(dir->membros);
+        free(dir);
+        free(dados);
         return 1;
     }
     
     // Limpeza
-    fclose(arq);
-    free(dados);
     free(dir->membros);
     free(dir);
+    free(dados);
     
     return 0;
 }
-
 
 
 int deve_extrair(const char *nome, const char **membros, int num_membros) {
@@ -366,7 +504,6 @@ int extrair_membros(const char *archive, const char **membros, int num_membros) 
     fclose(arq);
     return 0;
 }
-
 
 int remover_membros(const char *archive, const char **membros, int num_membros) {
     if (!archive || !membros || num_membros <= 0) return 1;
