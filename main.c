@@ -40,15 +40,20 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(opcao, "-d") == 0) {
         // Listar diretório
         return listar_conteudo(arquivo);
-    } else if (strcmp(opcao, "-r") == 0 || strcmp(opcao, "-m") == 0) {
-        // Remover membro ou modificar membro (se implementado)
+    } else if (strcmp(opcao, "-r") == 0) {
+        // Remover membro
         if (argc < 4) {
-            fprintf(stderr, "Erro: Faltando nome do membro para remover/modificar\n");
+            fprintf(stderr, "Erro: Faltando nome do membro para remover\n");
             return 1;
         }
-        // Implemente a função remover_membro ou modificar_membro conforme necessário
-        fprintf(stderr, "Funcionalidade não implementada: %s\n", opcao);
-        return 1;
+        return remover_membros(arquivo, (const char **)&argv[3], argc - 3);
+    } else if (strcmp(opcao, "-m") == 0) {
+        // Mover membro
+        if (argc < 5) {
+            fprintf(stderr, "Uso: %s -m <arquivo> <membro> <alvo>\n", argv[0]);
+            return 1;
+        }
+        return mover_membro(arquivo, argv[3], argv[4]);
     } else {
         fprintf(stderr, "Erro: Opção desconhecida: %s\n", opcao);
         return 1;
