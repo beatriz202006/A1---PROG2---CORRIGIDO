@@ -7,6 +7,7 @@
 // RETORNO: 0 em caso de sucesso, 1 em caso de erro
 int inserir_membro(const char *archive, const char *membro, int comprimir);
 
+// Função para ler um arquivo para a memória
 unsigned char *le_arquivo(const char *nome_arq, unsigned int *tam);
 
 // Remove membros (opção -r)
