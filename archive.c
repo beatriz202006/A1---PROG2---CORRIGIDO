@@ -113,21 +113,44 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
     if (!dados) {
         return 1;
     }
-    
+
     fprintf(stderr, "Primeiros bytes do arquivo %s: ", membro);
     for (int i = 0; i < 10 && i < tam_original; i++) {
         fprintf(stderr, "%02x ", dados[i]);
     }
     fprintf(stderr, "\n");
+
+    // Comprime os dados se necessário
+    unsigned char *dados_comprimidos = NULL;
+    unsigned int tam_comprimido = 0;
     
+    if (comprimir) {
+        // Aloca espaço para os dados comprimidos (pior caso: mesmo tamanho do original)
+        dados_comprimidos = malloc(tam_original);
+        if (!dados_comprimidos) {
+            free(dados);
+            return 1;
+        }
+        
+        // Comprime os dados
+        tam_comprimido = LZ_Compress(dados, dados_comprimidos, tam_original);
+        
+        // Se a compressão não reduziu o tamanho, usa os dados originais
+        if (tam_comprimido >= tam_original) {
+            free(dados_comprimidos);
+            dados_comprimidos = NULL;
+            comprimir = 0;  // Desativa a compressão
+        }
+    }
+
     // Extrai apenas o nome base do arquivo (sem caminho)
     const char *nome_base = get_basename(membro);
-    
+
     // Estrutura para armazenar o diretório
     struct Diretorio dir;
     dir.quantidade = 0;
     dir.membros = NULL;
-    
+
     // Verifica se o arquivo archive já existe
     FILE *arq = fopen(archive, "rb");
     if (arq) {
@@ -135,30 +158,32 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         if (fread(&dir.quantidade, sizeof(int), 1, arq) != 1) {
             fclose(arq);
             free(dados);
+            if (dados_comprimidos) free(dados_comprimidos);
             return 1;
         }
-        
+
         // Aloca espaço para os membros
         if (dir.quantidade > 0) {
             dir.membros = malloc(dir.quantidade * sizeof(struct Membro));
             if (!dir.membros) {
                 fclose(arq);
                 free(dados);
+                if (dados_comprimidos) free(dados_comprimidos);
                 return 1;
             }
-            
+
             // Lê os membros
             if (fread(dir.membros, sizeof(struct Membro), dir.quantidade, arq) != dir.quantidade) {
                 free(dir.membros);
                 fclose(arq);
                 free(dados);
+                if (dados_comprimidos) free(dados_comprimidos);
                 return 1;
             }
         }
-        
         fclose(arq);
     }
-    
+
     // Verifica se já existe um membro com o mesmo nome
     int membro_existente = -1;
     for (int i = 0; i < dir.quantidade; i++) {
@@ -167,11 +192,11 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
             break;
         }
     }
-    
+
     // Cria um novo array de membros
     int nova_quantidade;
     struct Membro *novos_membros;
-    
+
     if (membro_existente == -1) {
         // Adiciona um novo membro
         nova_quantidade = dir.quantidade + 1;
@@ -179,21 +204,24 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         if (!novos_membros) {
             if (dir.membros) free(dir.membros);
             free(dados);
+            if (dados_comprimidos) free(dados_comprimidos);
             return 1;
         }
-        
+
         // Copia os membros existentes
         for (int i = 0; i < dir.quantidade; i++) {
             novos_membros[i] = dir.membros[i];
         }
-        
+
         // Adiciona o novo membro
         strncpy(novos_membros[dir.quantidade].nome, nome_base, sizeof(novos_membros[dir.quantidade].nome) - 1);
+        novos_membros[dir.quantidade].nome[sizeof(novos_membros[dir.quantidade].nome) - 1] = '\0';
         novos_membros[dir.quantidade].uid = getuid();
         novos_membros[dir.quantidade].tam_orig = tam_original;
-        novos_membros[dir.quantidade].tam_disco = tam_original; // Sem compressão por enquanto
+        novos_membros[dir.quantidade].tam_disco = comprimir ? tam_comprimido : tam_original;
         novos_membros[dir.quantidade].data_modif = time(NULL);
         novos_membros[dir.quantidade].ordem = dir.quantidade;
+        novos_membros[dir.quantidade].comprimido = comprimir ? 1 : 0;
     } else {
         // Substitui o membro existente
         nova_quantidade = dir.quantidade;
@@ -201,49 +229,53 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         if (!novos_membros) {
             if (dir.membros) free(dir.membros);
             free(dados);
+            if (dados_comprimidos) free(dados_comprimidos);
             return 1;
         }
-        
+
         // Copia os membros existentes
         for (int i = 0; i < dir.quantidade; i++) {
             if (i == membro_existente) {
                 // Atualiza o membro existente
                 strncpy(novos_membros[i].nome, nome_base, sizeof(novos_membros[i].nome) - 1);
+                novos_membros[i].nome[sizeof(novos_membros[i].nome) - 1] = '\0';
                 novos_membros[i].uid = getuid();
                 novos_membros[i].tam_orig = tam_original;
-                novos_membros[i].tam_disco = tam_original; // Sem compressão por enquanto
+                novos_membros[i].tam_disco = comprimir ? tam_comprimido : tam_original;
                 novos_membros[i].data_modif = time(NULL);
                 novos_membros[i].ordem = i;
+                novos_membros[i].comprimido = comprimir ? 1 : 0;
             } else {
                 // Copia o membro existente
                 novos_membros[i] = dir.membros[i];
             }
         }
     }
-    
+
     // Calcula o tamanho do diretório
     long tamanho_diretorio = sizeof(int) + nova_quantidade * sizeof(struct Membro);
-    
+
     // Calcula os offsets para cada membro
     long offset = tamanho_diretorio;
     for (int i = 0; i < nova_quantidade; i++) {
         novos_membros[i].offset = offset;
         offset += novos_membros[i].tam_disco;
     }
-    
+
     // Cria um arquivo temporário para armazenar os dados
     char temp_file[1024];
     snprintf(temp_file, 1024, "%s.tmp", archive);
-    
+
     // Abre o arquivo temporário para escrita
     FILE *temp = fopen(temp_file, "wb");
     if (!temp) {
         free(novos_membros);
         if (dir.membros) free(dir.membros);
         free(dados);
+        if (dados_comprimidos) free(dados_comprimidos);
         return 1;
     }
-    
+
     // Escreve a quantidade de membros
     if (fwrite(&nova_quantidade, sizeof(int), 1, temp) != 1) {
         fclose(temp);
@@ -251,9 +283,10 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         free(novos_membros);
         if (dir.membros) free(dir.membros);
         free(dados);
+        if (dados_comprimidos) free(dados_comprimidos);
         return 1;
     }
-    
+
     // Escreve os membros
     if (fwrite(novos_membros, sizeof(struct Membro), nova_quantidade, temp) != nova_quantidade) {
         fclose(temp);
@@ -261,9 +294,10 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         free(novos_membros);
         if (dir.membros) free(dir.membros);
         free(dados);
+        if (dados_comprimidos) free(dados_comprimidos);
         return 1;
     }
-    
+
     // Abre o arquivo original para leitura
     arq = fopen(archive, "rb");
     if (arq) {
@@ -276,9 +310,10 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
             free(novos_membros);
             if (dir.membros) free(dir.membros);
             free(dados);
+            if (dados_comprimidos) free(dados_comprimidos);
             return 1;
         }
-        
+
         // Pula as estruturas de membros
         if (fseek(arq, old_quantidade * sizeof(struct Membro), SEEK_CUR) != 0) {
             fclose(arq);
@@ -287,23 +322,38 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
             free(novos_membros);
             if (dir.membros) free(dir.membros);
             free(dados);
+            if (dados_comprimidos) free(dados_comprimidos);
             return 1;
         }
-        
+
         // Para cada membro no novo diretório
         for (int i = 0; i < nova_quantidade; i++) {
             // Se este é o membro que está sendo substituído ou adicionado
-            if ((membro_existente != -1 && i == membro_existente) || 
+            if ((membro_existente != -1 && i == membro_existente) ||
                 (membro_existente == -1 && i == nova_quantidade - 1)) {
-                // Escreve os novos dados
-                if (fwrite(dados, 1, tam_original, temp) != tam_original) {
-                    fclose(arq);
-                    fclose(temp);
-                    remove(temp_file);
-                    free(novos_membros);
-                    if (dir.membros) free(dir.membros);
-                    free(dados);
-                    return 1;
+                // Escreve os dados (comprimidos ou originais)
+                if (comprimir) {
+                    if (fwrite(dados_comprimidos, 1, tam_comprimido, temp) != tam_comprimido) {
+                        fclose(arq);
+                        fclose(temp);
+                        remove(temp_file);
+                        free(novos_membros);
+                        if (dir.membros) free(dir.membros);
+                        free(dados);
+                        free(dados_comprimidos);
+                        return 1;
+                    }
+                } else {
+                    if (fwrite(dados, 1, tam_original, temp) != tam_original) {
+                        fclose(arq);
+                        fclose(temp);
+                        remove(temp_file);
+                        free(novos_membros);
+                        if (dir.membros) free(dir.membros);
+                        free(dados);
+                        if (dados_comprimidos) free(dados_comprimidos);
+                        return 1;
+                    }
                 }
             } else {
                 // Encontra o índice correspondente no arquivo original
@@ -314,7 +364,7 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
                         break;
                     }
                 }
-                
+
                 if (indice_original == -1) {
                     fclose(arq);
                     fclose(temp);
@@ -322,9 +372,10 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
                     free(novos_membros);
                     if (dir.membros) free(dir.membros);
                     free(dados);
+                    if (dados_comprimidos) free(dados_comprimidos);
                     return 1;
                 }
-                
+
                 // Posiciona o ponteiro no início dos dados do membro no arquivo original
                 if (fseek(arq, dir.membros[indice_original].offset, SEEK_SET) != 0) {
                     fclose(arq);
@@ -333,9 +384,10 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
                     free(novos_membros);
                     if (dir.membros) free(dir.membros);
                     free(dados);
+                    if (dados_comprimidos) free(dados_comprimidos);
                     return 1;
                 }
-                
+
                 // Aloca espaço para os dados do membro
                 unsigned char *dados_membro = malloc(dir.membros[indice_original].tam_disco);
                 if (!dados_membro) {
@@ -345,9 +397,10 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
                     free(novos_membros);
                     if (dir.membros) free(dir.membros);
                     free(dados);
+                    if (dados_comprimidos) free(dados_comprimidos);
                     return 1;
                 }
-                
+
                 // Lê os dados do membro
                 if (fread(dados_membro, 1, dir.membros[indice_original].tam_disco, arq) != dir.membros[indice_original].tam_disco) {
                     free(dados_membro);
@@ -357,9 +410,10 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
                     free(novos_membros);
                     if (dir.membros) free(dir.membros);
                     free(dados);
+                    if (dados_comprimidos) free(dados_comprimidos);
                     return 1;
                 }
-                
+
                 // Escreve os dados do membro no arquivo temporário
                 if (fwrite(dados_membro, 1, dir.membros[indice_original].tam_disco, temp) != dir.membros[indice_original].tam_disco) {
                     free(dados_membro);
@@ -369,42 +423,58 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
                     free(novos_membros);
                     if (dir.membros) free(dir.membros);
                     free(dados);
+                    if (dados_comprimidos) free(dados_comprimidos);
                     return 1;
                 }
-                
+
                 free(dados_membro);
             }
         }
-        
+
         fclose(arq);
     } else {
         // Se o arquivo original não existe, apenas escreve os dados do novo membro
-        if (fwrite(dados, 1, tam_original, temp) != tam_original) {
-            fclose(temp);
-            remove(temp_file);
-            free(novos_membros);
-            if (dir.membros) free(dir.membros);
-            free(dados);
-            return 1;
+        if (comprimir) {
+            if (fwrite(dados_comprimidos, 1, tam_comprimido, temp) != tam_comprimido) {
+                fclose(temp);
+                remove(temp_file);
+                free(novos_membros);
+                if (dir.membros) free(dir.membros);
+                free(dados);
+                free(dados_comprimidos);
+                return 1;
+            }
+        } else {
+            if (fwrite(dados, 1, tam_original, temp) != tam_original) {
+                fclose(temp);
+                remove(temp_file);
+                free(novos_membros);
+                if (dir.membros) free(dir.membros);
+                free(dados);
+                if (dados_comprimidos) free(dados_comprimidos);
+                return 1;
+            }
         }
     }
-    
+
     // Fecha o arquivo temporário
     fclose(temp);
-    
-    // Substitui o arquivo original pelo temporário
+
+        // Substitui o arquivo original pelo temporário
     if (rename(temp_file, archive) != 0) {
         remove(temp_file);
         free(novos_membros);
         if (dir.membros) free(dir.membros);
         free(dados);
+        if (dados_comprimidos) free(dados_comprimidos);
         return 1;
     }
-    
+
     // Limpeza
     free(novos_membros);
     if (dir.membros) free(dir.membros);
     free(dados);
+    if (dados_comprimidos) free(dados_comprimidos);
     
     return 0;
 }
@@ -468,8 +538,8 @@ int extrair_membros(const char *archive, const char **membros, int num_membros) 
         }
         
         if (extrair) {
-            fprintf(stderr, "Extraindo membro: %s (tamanho: %u bytes, offset: %ld)\n", 
-                    m->nome, m->tam_disco, m->offset);
+            fprintf(stderr, "Extraindo membro: %s (tamanho: %u bytes, offset: %ld, comprimido: %d)\n", 
+                    m->nome, m->tam_disco, m->offset, m->comprimido);
             
             // Posiciona no início dos dados do membro
             if (fseek(arq, m->offset, SEEK_SET) != 0) {
@@ -479,7 +549,7 @@ int extrair_membros(const char *archive, const char **membros, int num_membros) 
                 return 1;
             }
             
-            // Aloca buffer para os dados
+            // Aloca buffer para os dados comprimidos
             unsigned char *buffer = malloc(m->tam_disco);
             if (!buffer) {
                 fprintf(stderr, "Erro ao alocar memória para extração\n");
@@ -499,22 +569,50 @@ int extrair_membros(const char *archive, const char **membros, int num_membros) 
                 return 1;
             }
             
+            // Se o membro está comprimido, descomprime
+            unsigned char *dados_finais = buffer;
+            unsigned int tam_final = m->tam_disco;
+            
+            if (m->comprimido) {
+                fprintf(stderr, "Descomprimindo dados (tam_orig: %u, tam_disco: %u)\n", 
+                        m->tam_orig, m->tam_disco);
+                
+                unsigned char *dados_descomprimidos = malloc(m->tam_orig);
+                if (!dados_descomprimidos) {
+                    fprintf(stderr, "Erro ao alocar memória para descompressão\n");
+                    free(buffer);
+                    destroi_diretorio(dir);
+                    fclose(arq);
+                    return 1;
+                }
+                
+                // Descomprime os dados
+                LZ_Uncompress(buffer, dados_descomprimidos, m->tam_disco);
+                
+                // Libera os dados comprimidos, pois não são mais necessários
+                free(buffer);
+                
+                // Usa os dados descomprimidos
+                dados_finais = dados_descomprimidos;
+                tam_final = m->tam_orig;
+            }
+            
             // Escreve os dados no arquivo de saída
             FILE *saida = fopen(m->nome, "wb");
             if (!saida) {
                 fprintf(stderr, "Erro ao criar arquivo de saída: %s\n", m->nome);
-                free(buffer);
+                free(dados_finais);
                 destroi_diretorio(dir);
                 fclose(arq);
                 return 1;
             }
             
-            size_t bytes_escritos = fwrite(buffer, 1, m->tam_disco, saida);
-            if (bytes_escritos != m->tam_disco) {
+            size_t bytes_escritos = fwrite(dados_finais, 1, tam_final, saida);
+            if (bytes_escritos != tam_final) {
                 fprintf(stderr, "Erro ao escrever dados no arquivo %s: escrito %zu de %u bytes\n", 
-                        m->nome, bytes_escritos, m->tam_disco);
+                        m->nome, bytes_escritos, tam_final);
                 fclose(saida);
-                free(buffer);
+                free(dados_finais);
                 destroi_diretorio(dir);
                 fclose(arq);
                 return 1;
@@ -529,7 +627,7 @@ int extrair_membros(const char *archive, const char **membros, int num_membros) 
                 long tamanho_arquivo = ftell(verificacao);
                 
                 fprintf(stderr, "Tamanho do arquivo extraído: %ld bytes (esperado: %u bytes)\n", 
-                        tamanho_arquivo, m->tam_disco);
+                        tamanho_arquivo, tam_final);
                 
                 // Imprime os primeiros bytes do arquivo extraído
                 rewind(verificacao);
@@ -545,7 +643,7 @@ int extrair_membros(const char *archive, const char **membros, int num_membros) 
                 fclose(verificacao);
             }
             
-            free(buffer);
+            free(dados_finais);
         } else {
             fprintf(stderr, "Membro %s não será extraído\n", m->nome);
         }
@@ -556,7 +654,6 @@ int extrair_membros(const char *archive, const char **membros, int num_membros) 
     fclose(arq);
     return 0;
 }
-
 
 int remover_membros(const char *archive, const char **membros, int num_membros) {
     if (!archive || !membros || num_membros <= 0) return 1;

@@ -5,7 +5,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g
 
 # Arquivos fonte e objetos
-SRCS = main.c archive.c diretorio.c
+SRCS = main.c archive.c diretorio.c lz.c
 OBJS = $(SRCS:.c=.o)
 
 # Nome do executável

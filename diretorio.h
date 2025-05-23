@@ -14,6 +14,7 @@ struct Membro {
     time_t data_modif;       // Data da última modificação
     int ordem;               // Ordem de inserção
     long offset;             // Posição dos dados no archive
+    int comprimido;          // 1 se comprimido, 0 se não
 };
 
 // Estrutura do diretório
