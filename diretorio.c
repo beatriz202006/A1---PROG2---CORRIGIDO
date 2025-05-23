@@ -19,6 +19,27 @@ struct Diretorio *cria_diretorio() {
     return dir;
 }
 
+struct Membro inicializa_membro(const char *nome, uid_t uid, unsigned int tam_orig,
+                         unsigned int tam_disco, time_t data_modif, int ordem,
+                         long offset, int comprimido) {
+    struct Membro membro;
+
+    //Zera a estrutura:
+    memset(&membro, 0, sizeof(struct Membro));
+
+    //Inicializa os campos:
+    strncpy(membro.nome, nome, sizeof(membro.nome) - 1);
+    membro.nome[sizeof(membro.nome) - 1] = '\0';  // Garante terminação
+    membro.uid = uid;
+    membro.tam_orig = tam_orig;
+    membro.tam_disco = tam_disco;
+    membro.data_modif = data_modif;
+    membro.ordem = ordem;
+    membro.offset = offset;
+    membro.comprimido = comprimido;
+    
+    return membro;
+}
 void destroi_diretorio(struct Diretorio *dir) {
     if (!dir) return;
     
@@ -70,7 +91,6 @@ struct Diretorio *le_diretorio(FILE *arq) {
         return NULL;
     }
     
-    fprintf(stderr, "Lendo diretório com %d membros\n", quantidade);
     
     // Verifica se a quantidade é válida
     if (quantidade < 0 || quantidade > 1000) {  // Limite arbitrário para evitar problemas
@@ -118,7 +138,6 @@ struct Diretorio *le_diretorio(FILE *arq) {
     return dir;
 }
 int salva_diretorio(FILE *arq, struct Diretorio *dir) {
-    fprintf(stderr, "Salvando diretório com %d membros\n", dir->quantidade);
     
     // Posiciona no início do arquivo
     if (fseek(arq, 0, SEEK_SET) != 0) {

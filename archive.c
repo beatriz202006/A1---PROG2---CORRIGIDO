@@ -6,12 +6,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <libgen.h> // Para basename
-#include <limits.h>
-#include <limits.h>  // Para PATH_MAX
-#include <errno.h>   // Para errno e ENOENT
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
+
 
 // Função para extrair o nome base do arquivo
 const char *get_basename(const char *path) {
@@ -214,14 +209,15 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         }
 
         // Adiciona o novo membro
-        strncpy(novos_membros[dir.quantidade].nome, nome_base, sizeof(novos_membros[dir.quantidade].nome) - 1);
-        novos_membros[dir.quantidade].nome[sizeof(novos_membros[dir.quantidade].nome) - 1] = '\0';
-        novos_membros[dir.quantidade].uid = getuid();
-        novos_membros[dir.quantidade].tam_orig = tam_original;
-        novos_membros[dir.quantidade].tam_disco = comprimir ? tam_comprimido : tam_original;
-        novos_membros[dir.quantidade].data_modif = time(NULL);
-        novos_membros[dir.quantidade].ordem = dir.quantidade;
-        novos_membros[dir.quantidade].comprimido = comprimir ? 1 : 0;
+        novos_membros[dir.quantidade] = inicializa_membro(
+        nome_base,
+        getuid(),
+        tam_original,
+        comprimir ? tam_comprimido : tam_original,
+        time(NULL),
+        dir.quantidade,
+        0,  // offset será calculado depois
+        comprimir ? 1 : 0);
     } else {
         // Substitui o membro existente
         nova_quantidade = dir.quantidade;
@@ -237,14 +233,15 @@ int inserir_membro(const char *archive, const char *membro, int comprimir) {
         for (int i = 0; i < dir.quantidade; i++) {
             if (i == membro_existente) {
                 // Atualiza o membro existente
-                strncpy(novos_membros[i].nome, nome_base, sizeof(novos_membros[i].nome) - 1);
-                novos_membros[i].nome[sizeof(novos_membros[i].nome) - 1] = '\0';
-                novos_membros[i].uid = getuid();
-                novos_membros[i].tam_orig = tam_original;
-                novos_membros[i].tam_disco = comprimir ? tam_comprimido : tam_original;
-                novos_membros[i].data_modif = time(NULL);
-                novos_membros[i].ordem = i;
-                novos_membros[i].comprimido = comprimir ? 1 : 0;
+                novos_membros[i] = inicializa_membro(
+                nome_base,
+                getuid(),
+                tam_original,
+                comprimir ? tam_comprimido : tam_original,
+                time(NULL),
+                i,
+                0,  // offset será calculado depois
+                comprimir ? 1 : 0);
             } else {
                 // Copia o membro existente
                 novos_membros[i] = dir.membros[i];

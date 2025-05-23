@@ -24,6 +24,9 @@ struct Diretorio {
     int capacidade;          // Tamanho alocado
 };
 
+struct Membro inicializa_membro(const char *nome, uid_t uid, unsigned int tam_orig,
+                         unsigned int tam_disco, time_t data_modif, int ordem,
+                         long offset, int comprimido);
 // Cria diretório vazio com capacidade inicial
 // RETORNO: ponteiro para o diretório alocado ou NULL em caso de erro
 struct Diretorio *cria_diretorio();
