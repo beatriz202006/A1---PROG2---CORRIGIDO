@@ -1,0 +1,25 @@
+Para implementar o trabalho, precisei reescrever completamente o código original que falhava nos testes. As principais mudanças foram:
+
+    Correções fundamentais:
+
+        Reconstruí todas as funções básicas (-ip, -ic, -x, -r, -c, -m)
+
+        Corrigi problemas graves de manipulação de archives
+
+        Implementei tratamento robusto de erros
+
+    Tentativa de implementar -z:
+
+        Criei a função inserir_z() (NÃO FUNCIONA - limitação de tempo)
+
+        Adicionei a opção -z no main.c
+
+        A estrutura básica foi preparada, mas não finalizada
+
+    Resultado atual:
+
+        Todas operações originais funcionam corretamente
+
+        O sistema principal está estável e testado
+
+        A função -z permanece incompleta
