@@ -1,3 +1,5 @@
+BEATRIZ PONTES CAMARGO
+
 Para implementar o trabalho, precisei reescrever completamente o código original que falhava nos testes. As principais mudanças foram:
 
     Correções fundamentais:
