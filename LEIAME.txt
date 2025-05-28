@@ -10,11 +10,11 @@ Para implementar o trabalho, precisei reescrever completamente o código origina
 
     Tentativa de implementar -z:
 
-        Criei a função inserir_z() (NÃO FUNCIONA - limitação de tempo)
+        Criei a função inserir_z(), tentando reaproveitar a inserir_membro.
 
         Adicionei a opção -z no main.c
 
-        A estrutura básica foi preparada, mas não finalizada
+        A estrutura básica foi preparada, mas não finalizada devido ao tempo.
 
     Resultado atual:
 
